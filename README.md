@@ -95,12 +95,6 @@ The `requirements.txt` file lists all necessary Python packages and their versio
 pip install -r requirements.txt
 ```
 
-### Usage:
-
-To prepare the data:
-```bash
-python main.py --mode prepare_data
-
 
 ### Results:
 Mean IoU: 0.6478
@@ -111,11 +105,20 @@ Mean Accuracy: 0.9596
 
 Mean Average Precision (AP): 0.7736
 
-Mean FPS (on validation set): 1022.88
+Mean FPS : 1022.88
 
 ###Visualizations
+<img width="985" height="600" alt="Screenshot 2026-03-31 003051" src="https://github.com/user-attachments/assets/49ca6d07-f2e3-4944-b896-87a8ebdae955" />
+<img width="978" height="198" alt="Screenshot 2026-03-31 033345" src="https://github.com/user-attachments/assets/7a8c9c56-b464-4385-a27a-bd66722d24e8" />
+<img width="997" height="199" alt="Screenshot 2026-03-31 033419" src="https://github.com/user-attachments/assets/8e9811e9-1035-47d5-a39c-313a0ef854b0" />
+
+### Usage:
+
+To prepare the data:
+```bash
+python main.py --mode prepare_data
 
 
-![alt text](image.png)
-![alt text](image-1.png)
-![alt text](<Screenshot 2026-03-31 003051-1.png>)
+
+
+
