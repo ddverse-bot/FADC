@@ -1,3 +1,5 @@
+from .blocks import DoubleConv
+from .fourier_fadc import FourierFADC
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -266,3 +268,167 @@ class UNetPlusPlus(nn.Module):
         else:
 
             return self.final(x0_4)
+class FADCDoubleConv(nn.Module):
+
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+
+        self.block = nn.Sequential(
+
+            FourierFADC(
+                in_channels,
+                out_channels
+            ),
+
+            nn.BatchNorm2d(out_channels),
+
+            nn.ReLU(inplace=True),
+
+            FourierFADC(
+                out_channels,
+                out_channels
+            ),
+
+            nn.BatchNorm2d(out_channels),
+
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.block(x)
+class UNetPlusPlusFADC(nn.Module):
+
+    def __init__(
+        self,
+        n_channels=1,
+        n_classes=1,
+        deep_supervision=False
+    ):
+        super().__init__()
+
+        self.deep_supervision = deep_supervision
+
+        nb_filter = [64,128,256,512,1024]
+
+        self.pool = nn.MaxPool2d(2)
+
+        self.up = nn.Upsample(
+            scale_factor=2,
+            mode='bilinear',
+            align_corners=True
+        )
+
+        # shallow encoder
+
+        self.conv0_0 = DoubleConv(
+            n_channels,
+            nb_filter[0]
+        )
+
+        self.conv1_0 = DoubleConv(
+            nb_filter[0],
+            nb_filter[1]
+        )
+
+        # deep encoder with FADC
+
+        self.conv2_0 = FADCDoubleConv(
+            nb_filter[1],
+            nb_filter[2]
+        )
+
+        self.conv3_0 = FADCDoubleConv(
+            nb_filter[2],
+            nb_filter[3]
+        )
+
+        self.conv4_0 = FADCDoubleConv(
+            nb_filter[3],
+            nb_filter[4]
+        )
+
+        # decoder
+
+        self.conv0_1 = DoubleConv(
+            nb_filter[0] + nb_filter[1],
+            nb_filter[0]
+        )
+
+        self.conv1_1 = DoubleConv(
+            nb_filter[1] + nb_filter[2],
+            nb_filter[1]
+        )
+
+        self.conv2_1 = DoubleConv(
+            nb_filter[2] + nb_filter[3],
+            nb_filter[2]
+        )
+
+        self.conv3_1 = DoubleConv(
+            nb_filter[3] + nb_filter[4],
+            nb_filter[3]
+        )
+
+        self.conv0_2 = DoubleConv(
+            nb_filter[0]*2 + nb_filter[1],
+            nb_filter[0]
+        )
+
+        self.conv1_2 = DoubleConv(
+            nb_filter[1]*2 + nb_filter[2],
+            nb_filter[1]
+        )
+
+        self.conv2_2 = DoubleConv(
+            nb_filter[2]*2 + nb_filter[3],
+            nb_filter[2]
+        )
+
+        self.conv0_3 = DoubleConv(
+            nb_filter[0]*3 + nb_filter[1],
+            nb_filter[0]
+        )
+
+        self.conv1_3 = DoubleConv(
+            nb_filter[1]*3 + nb_filter[2],
+            nb_filter[1]
+        )
+
+        self.conv0_4 = DoubleConv(
+            nb_filter[0]*4 + nb_filter[1],
+            nb_filter[0]
+        )
+
+        if deep_supervision:
+
+            self.final1 = nn.Conv2d(
+                nb_filter[0],
+                n_classes,
+                1
+            )
+
+            self.final2 = nn.Conv2d(
+                nb_filter[0],
+                n_classes,
+                1
+            )
+
+            self.final3 = nn.Conv2d(
+                nb_filter[0],
+                n_classes,
+                1
+            )
+
+            self.final4 = nn.Conv2d(
+                nb_filter[0],
+                n_classes,
+                1
+            )
+
+        else:
+
+            self.final = nn.Conv2d(
+                nb_filter[0],
+                n_classes,
+                1
+            )
