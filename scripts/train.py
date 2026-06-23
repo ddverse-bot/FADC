@@ -1,146 +1,364 @@
 import os
-
-
 import torch
 import torch.nn as nn
-import torch.optim as optim
+
 from tqdm import tqdm
-import os
 
-# Import necessary modules from the project structure
-from medical_segmentation_project.models.unet_architectures import ComplexUNet
-from medical_segmentation_project.utils.data_preprocessing import prepare_busi_dataset
-from medical_segmentation_project.utils.losses import DiceLoss, CombinedLoss
-from models import UNet
-from models import UNetFADC
+from utils.data_preprocessing import prepare_busi_dataset
 
-from models import UNetPlusPlus
-from models import UNetPlusPlusFADC
+from utils.losses import (
+CombinedLoss,
+SegmentationCalibrationLoss
+)
 
-from models import AttentionUNet
-from models import AttentionUNetFADC
+from models import (
+UNet,
+UNetFADC,
+UNetPlusPlus,
+UNetPlusPlusFADC,
+AttentionUNet,
+AttentionUNetFADC,
+TransUNet,
+TransUNetFADC
+)
 
-from models import TransUNet
-from models import TransUNetFADC
+# --------------------------------------------------
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=50, device='cuda'):
-    model.to(device)
+# CONFIG
 
-    history = {'train_loss': [], 'val_loss': [], 'val_dice': []}
-    model_save_dir = os.path.join("medical_segmentation_project", "checkpoints")
-    os.makedirs(model_save_dir, exist_ok=True)
-    model_save_path = os.path.join(model_save_dir, "complex_unet_segmentation_model.pth")
+# --------------------------------------------------
 
-    print(f"Training started on device: {device}")
-    print(f"Model checkpoints will be saved to: {model_save_path}")
+MODEL_NAME = "UNetFADC"
 
-    for epoch in range(num_epochs):
-        model.train()
-        running_loss = 0.0
-        train_loop = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} Train")
-        for inputs, masks in train_loop:
-            inputs, masks = inputs.to(device), masks.to(device)
+USE_CALIBRATION = True
 
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, masks)
-            loss.backward()
-            optimizer.step()
+EPOCHS = 50
 
-            running_loss += loss.item() * inputs.size(0)
-            train_loop.set_postfix(loss=loss.item())
+LR = 1e-4
 
-        epoch_train_loss = running_loss / len(train_loader.dataset)
-        history['train_loss'].append(epoch_train_loss)
+DEVICE = (
+"cuda"
+if torch.cuda.is_available()
+else "cpu"
+)
 
-        # Validation phase
-        model.eval()
-        val_loss = 0.0
-        val_dice_score = 0.0
-        val_loop = tqdm(val_loader, desc=f"Epoch {epoch+1}/{num_epochs} Val  ")
-        with torch.no_grad():
-            for inputs, masks in val_loop:
-                inputs, masks = inputs.to(device), masks.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, masks)
-                val_loss += loss.item() * inputs.size(0)
+CHECKPOINT_DIR = "checkpoints"
 
-                preds = torch.sigmoid(outputs)
-                dice = 1 - DiceLoss()(preds, masks) # DiceLoss instantiated here
-                val_dice_score += dice.item() * inputs.size(0)
-                val_loop.set_postfix(loss=loss.item(), dice=dice.item())
+os.makedirs(
+CHECKPOINT_DIR,
+exist_ok=True
+)
 
-        epoch_val_loss = val_loss / len(val_loader.dataset)
-        epoch_val_dice = val_dice_score / len(val_loader.dataset)
-        history['val_loss'].append(epoch_val_loss)
-        history['val_dice'].append(epoch_val_dice)
+# --------------------------------------------------
 
-        print(f"Epoch {epoch+1}/{num_epochs} -> Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}, Val Dice: {epoch_val_dice:.4f}")
+# MODEL FACTORY
 
-        # Save model checkpoint after each epoch
-        torch.save(model.state_dict(), model_save_path)
-        print(f"Model checkpoint saved to {model_save_path}")
+# --------------------------------------------------
 
-    print("Training complete!")
-    return model, history
+def build_model(name):
 
+```
+models = {
 
-if __name__ == '__main__':
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    "UNet":
+        UNet(),
 
-    
-    print("Preparing dataset...")
-    
-    try:
-        train_loader, val_loader = prepare_busi_dataset()
-        print("Dataset prepared and DataLoaders created.")
-    except Exception as e:
-        print(f"Error preparing dataset. Make sure `kaggle.json` is configured and dataset is downloaded and unzipped. Error: {e}")
-        exit() 
+    "UNetFADC":
+        UNetFADC(),
 
-    # Instantiate the ComplexUNet model
-    model = ComplexUNet(in_channels=3, out_channels=1)
-    model.to(device)
+    "UNetPlusPlus":
+        UNetPlusPlus(),
 
-    # Define loss function and optimizer
-    criterion = CombinedLoss(bce_weight=0.5, dice_weight=0.5)
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    "UNetPlusPlusFADC":
+        UNetPlusPlusFADC(),
 
-    # Path for model weights
-    model_weights_dir = os.path.join("medical_segmentation_project", "checkpoints")
-    os.makedirs(model_weights_dir, exist_ok=True) # Ensure directory exists
-    model_weights_path = os.path.join(model_weights_dir, "complex_unet_segmentation_model.pth")
+    "AttentionUNet":
+        AttentionUNet(),
 
-    # Load existing model weights if available to resume training
-    if os.path.exists(model_weights_path):
-        print(f"Loading previous weights from {model_weights_path} to resume training.")
-        model.load_state_dict(torch.load(model_weights_path, map_location=device), strict=False)
+    "AttentionUNetFADC":
+        AttentionUNetFADC(),
+
+    "TransUNet":
+        TransUNet(),
+
+    "TransUNetFADC":
+        TransUNetFADC()
+}
+
+return models[name]
+```
+
+# --------------------------------------------------
+
+# DICE SCORE
+
+# --------------------------------------------------
+
+def dice_score(
+preds,
+targets,
+smooth=1e-6
+):
+
+```
+preds = preds.view(-1)
+
+targets = targets.view(-1)
+
+intersection = (
+    preds * targets
+).sum()
+
+dice = (
+    2.0 * intersection + smooth
+) / (
+    preds.sum()
+    + targets.sum()
+    + smooth
+)
+
+return dice.item()
+```
+
+# --------------------------------------------------
+
+# TRAIN LOOP
+
+# --------------------------------------------------
+
+def train_epoch(
+model,
+loader,
+optimizer,
+criterion
+):
+
+```
+model.train()
+
+running_loss = 0
+
+for images, masks in tqdm(loader):
+
+    images = images.to(DEVICE)
+
+    masks = masks.to(DEVICE)
+
+    optimizer.zero_grad()
+
+    logits = model(images)
+
+    if USE_CALIBRATION:
+
+        loss, seg_loss, cal_loss = criterion(
+            logits,
+            masks
+        )
+
     else:
-        print(f"No previous weights found at {model_weights_path}. Training from scratch.")
 
-    # Train the model
-    print("\n--- Starting ComplexUNet training ---")
-    trained_model, training_history = train_model(
-        model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device=device
+        loss = criterion(
+            logits,
+            masks
+        )
+
+    loss.backward()
+
+    optimizer.step()
+
+    running_loss += loss.item()
+
+return (
+    running_loss
+    /
+    len(loader)
+)
+```
+
+# --------------------------------------------------
+
+# VALIDATION
+
+# --------------------------------------------------
+
+def validate(
+model,
+loader,
+criterion
+):
+
+```
+model.eval()
+
+val_loss = 0
+
+dice_list = []
+
+with torch.no_grad():
+
+    for images, masks in loader:
+
+        images = images.to(
+            DEVICE
+        )
+
+        masks = masks.to(
+            DEVICE
+        )
+
+        logits = model(images)
+
+        if USE_CALIBRATION:
+
+            loss, _, _ = criterion(
+                logits,
+                masks
+            )
+
+        else:
+
+            loss = criterion(
+                logits,
+                masks
+            )
+
+        probs = torch.sigmoid(
+            logits
+        )
+
+        preds = (
+            probs > 0.5
+        ).float()
+
+        dice = dice_score(
+            preds,
+            masks
+        )
+
+        dice_list.append(
+            dice
+        )
+
+        val_loss += loss.item()
+
+return (
+
+    val_loss
+    /
+    len(loader),
+
+    sum(dice_list)
+    /
+    len(dice_list)
+)
+```
+
+# --------------------------------------------------
+
+# MAIN
+
+# --------------------------------------------------
+
+def main():
+
+```
+train_loader, val_loader = (
+    prepare_busi_dataset()
+)
+
+model = build_model(
+    MODEL_NAME
+).to(DEVICE)
+
+if USE_CALIBRATION:
+
+    criterion = (
+        SegmentationCalibrationLoss(
+            calibration_weight=0.1
+        )
     )
 
-    print("\nTraining History:")
-    for k, v in training_history.items():
-        print(f"{k}: {v}")
+else:
 
-    
-    torch.save(trained_model.state_dict(), model_weights_path)
-    print(f"Final trained model saved as {model_weights_path}")
+    criterion = (
+        CombinedLoss()
+    )
 
+optimizer = (
+    torch.optim.AdamW(
+        model.parameters(),
+        lr=LR,
+        weight_decay=1e-5
+    )
+)
 
+scheduler = (
+    torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=EPOCHS
+    )
+)
 
-file_path = "medical_segmentation_project/scripts/train.py"
+best_dice = 0
 
-os.makedirs(os.path.dirname(file_path), exist_ok=True)
+for epoch in range(EPOCHS):
 
+    train_loss = train_epoch(
+        model,
+        train_loader,
+        optimizer,
+        criterion
+    )
 
-with open(file_path, "w") as f:
-    f.write(train_script_content.strip())
+    val_loss, val_dice = validate(
+        model,
+        val_loader,
+        criterion
+    )
 
-print(f"Generated {file_path} with the training script.")
+    scheduler.step()
+
+    print(
+        f"Epoch {epoch+1}/{EPOCHS}"
+    )
+
+    print(
+        f"Train Loss: {train_loss:.4f}"
+    )
+
+    print(
+        f"Val Loss: {val_loss:.4f}"
+    )
+
+    print(
+        f"Val Dice: {val_dice:.4f}"
+    )
+
+    if val_dice > best_dice:
+
+        best_dice = val_dice
+
+        torch.save(
+
+            model.state_dict(),
+
+            os.path.join(
+                CHECKPOINT_DIR,
+                f"{MODEL_NAME}_best.pth"
+            )
+        )
+
+        print(
+            "Best model saved."
+        )
+
+print(
+    f"Best Dice: {best_dice:.4f}"
+)
+```
+
+if **name** == "**main**":
+
+```
+main()
+```
