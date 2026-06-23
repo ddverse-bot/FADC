@@ -1,212 +1,460 @@
 import os
-
+import pandas as pd
+import cv2
+import numpy as np
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-import time
-import matplotlib.pyplot as plt
-import cv2
-import random
+from tqdm import tqdm
 
-# Import necessary modules from the project structure
-from medical_segmentation_project.models.unet_architectures import ComplexUNet
-from medical_segmentation_project.utils.data_preprocessing import BUSI # Only BUSI Dataset needed for evaluation
-from medical_segmentation_project.utils.metrics import calculate_iou, calculate_dice, calculate_accuracy, calculate_ap
+from utils.data_preprocessing import prepare_busi_dataset
 
+from utils.metrics import (
+calculate_dice,
+calculate_iou,
+calculate_accuracy,
+calculate_ap
+)
 
-val_loader_dir = "/content/BUSI/images/val"
-val_masks_dir = "/content/BUSI/masks/val"
+from utils.calibration import (
+calculate_ece,
+calculate_ace,
+calculate_brier_score
+)
 
-if not os.path.exists(val_loader_dir) or not os.path.exists(val_masks_dir):
-    print("Warning: Validation data directories not found. Please run `train.py` or `data_preprocessing.py` first to prepare the dataset.")
-    
+from models import *
 
-val_loader = torch.utils.data.DataLoader(BUSI(val_loader_dir, val_masks_dir),
-                                      batch_size=4, shuffle=False)
+from models.crisp import (
+CRISP,
+AnatomicalConsistencyMap
+)
 
-def evaluate_model(model, val_loader, device='cuda'):
-    model.to(device)
-    model.eval() # Set model to evaluation mode
+# --------------------------------------------------
 
-    all_iou = []
-    all_dice = []
-    all_accuracy = []
-    all_ap = []
-    all_fps = []
+# CONFIG
 
-    print("\n--- Starting Model Evaluation ---")
-    with torch.no_grad():
-        for inputs, masks in val_loader:
-            inputs, masks = inputs.to(device), masks.to(device)
+# --------------------------------------------------
 
-            start_time = time.time()
-            outputs = model(inputs)
-            end_time = time.time()
+MODEL_NAME = "unetpp_fadc"
 
-            batch_size = inputs.size(0)
-            fps = batch_size / (end_time - start_time)
-            all_fps.append(fps)
+CHECKPOINT_PATH = (
+f"checkpoints/{MODEL_NAME}.pth"
+)
 
-            preds_prob = torch.sigmoid(outputs)
-            preds_binary = (preds_prob > 0.5).float()
+DEVICE = (
+"cuda"
+if torch.cuda.is_available()
+else "cpu"
+)
 
-            iou = calculate_iou(preds_binary, masks)
-            dice = calculate_dice(outputs, masks)
-            accuracy = calculate_accuracy(preds_binary, masks)
-            ap = calculate_ap(outputs, masks)
+SAVE_VISUALS = True
 
-            all_iou.append(iou.item())
-            all_dice.append(dice.item())
-            all_accuracy.append(accuracy.item())
-            all_ap.append(ap)
+RESULT_DIR = "results"
 
-    mean_iou = np.mean(all_iou)
-    mean_dice = np.mean(all_dice)
-    mean_accuracy = np.mean(all_accuracy)
-    mean_ap = np.mean(all_ap)
-    mean_fps = np.mean(all_fps)
+os.makedirs(
+RESULT_DIR,
+exist_ok=True
+)
 
-    metrics = {
-        "Mean IoU": mean_iou,
-        "Mean Dice Score": mean_dice,
-        "Mean Accuracy": mean_accuracy,
-        "Mean Average Precision (AP)": mean_ap,
-        "Mean FPS": mean_fps
-    }
+# --------------------------------------------------
 
-    print(f"\n--- Evaluation Results ---")
-    for metric_name, value in metrics.items():
-        print(f"{metric_name}: {value:.4f}")
+# MODEL FACTORY
 
-    return metrics
+# --------------------------------------------------
 
-def visualize_predictions(model, val_loader, device='cuda', num_samples=5, smoothing_sigma=1.5):
-    model.to(device)
-    model.eval()
+def get_model(name):
 
-    print(f"\n--- Generating Visualizations for {num_samples} Random Samples ---")
-    val_dataset_indices = list(range(len(val_loader.dataset)))
-    random_indices = random.sample(val_dataset_indices, min(num_samples, len(val_dataset_indices)))
+```
+models = {
 
-    plt.figure(figsize=(20, 4 * num_samples))
+    "unet":
+        UNet(),
 
-    with torch.no_grad():
-        for i, idx in enumerate(random_indices):
-            sample_image, sample_mask = val_loader.dataset[idx]
-            sample_image = sample_image.unsqueeze(0).to(device)
-            sample_mask  = sample_mask.unsqueeze(0).to(device)
+    "unet_fadc":
+        UNetFADC(),
 
-            # Manually trace forward pass to extract FADC's intermediate outputs for visualization
-            x = sample_image
-            skip_connections = []
+    "unetpp":
+        UNetPlusPlus(),
 
-            # Encoder path
-            for down_block_seq in model.downs:
-                x = down_block_seq(x)
-                skip_connections.append(x)
-                x = model.pool(x)
+    "unetpp_fadc":
+        UNetPlusPlusFADC(),
 
-            
-            bottleneck_output = model.bottleneck(x)
-           
-            fadc_map_np = bottleneck_output.mean(dim=1).squeeze().cpu().numpy() 
+    "attunet":
+        AttentionUNet(),
 
-            # Decoder path
-            x = bottleneck_output
-            skip_connections = skip_connections[::-1]
+    "attunet_fadc":
+        AttentionUNetFADC(),
 
-            for j in range(0, len(model.ups), 2):
-                x = model.ups[j](x)
-                skip_idx = (j // 2)
-                skip_connection = skip_connections[skip_idx]
+    "transunet":
+        TransUNet(),
 
-                if x.shape[2:] != skip_connection.shape[2:]:
-                    x = F.interpolate(x, size=skip_connection.shape[2:], mode='bilinear', align_corners=True)
+    "transunet_fadc":
+        TransUNetFADC()
+}
 
-                concat_skip = torch.cat((skip_connection, x), dim=1)
-                x = model.ups[j+1](concat_skip)
+return models[name]
+```
 
-            prediction_logits = model.final_conv(x)
-            prediction = torch.sigmoid(prediction_logits)
-            prediction_binary = (prediction > 0.5).float()
+# --------------------------------------------------
 
-            original_image_np = sample_image.squeeze(0).permute(1, 2, 0).cpu().numpy()
-            ground_truth_np   = sample_mask.squeeze(0).squeeze(0).cpu().numpy()
+# SAVE VISUALIZATION
 
-            prediction_np_smoothed = cv2.GaussianBlur(prediction_binary.squeeze(0).squeeze(0).cpu().numpy(), (0,0), smoothing_sigma)
-            prediction_np = (prediction_np_smoothed > 0.5).astype(np.float32)
+# --------------------------------------------------
 
-            overlay_image_np = original_image_np.copy()
-            overlay_mask_area = prediction_np > 0
-            if overlay_image_np.ndim == 2:
-                overlay_image_np = np.stack([overlay_image_np, overlay_image_np, overlay_image_np], axis=-1)
-            overlay_image_np[overlay_mask_area, 1] = 1.0
-            overlay_image_np[overlay_mask_area, 0] *= 0.5
-            overlay_image_np[overlay_mask_area, 2] *= 0.5
+def save_visualization(
+image,
+gt,
+pred,
+uncertainty,
+idx
+):
 
-            row_start = i * 5
+```
+image = (
+    image.cpu()
+    .permute(1,2,0)
+    .numpy()
+    * 255
+).astype(np.uint8)
 
-            plt.subplot(num_samples, 5, row_start + 1)
-            plt.imshow(original_image_np)
-            plt.title(f'Sample {idx}\nOriginal Image')
-            plt.axis('off')
+gt = (
+    gt.cpu()
+    .squeeze()
+    .numpy()
+    * 255
+).astype(np.uint8)
 
-            plt.subplot(num_samples, 5, row_start + 2)
-            plt.imshow(ground_truth_np, cmap='gray')
-            plt.title(f'Sample {idx}\nGround Truth')
-            plt.axis('off')
+pred = (
+    pred.cpu()
+    .squeeze()
+    .numpy()
+    * 255
+).astype(np.uint8)
 
-            plt.subplot(num_samples, 5, row_start + 3)
-            plt.imshow(prediction_np, cmap='gray')
-            plt.title(f'Sample {idx}\nPredicted Mask')
-            plt.axis('off')
+uncertainty = (
+    uncertainty.cpu()
+    .squeeze()
+    .numpy()
+)
 
-            plt.subplot(num_samples, 5, row_start + 4)
-            plt.imshow(fadc_map_np, cmap='viridis')
-            plt.title(f'Sample {idx}\nBottleneck Map')
-            plt.axis('off')
+uncertainty = (
+    uncertainty
+    -
+    uncertainty.min()
+)
 
-            plt.subplot(num_samples, 5, row_start + 5)
-            plt.imshow(overlay_image_np)
-            plt.title(f'Sample {idx}\nOverlay')
-            plt.axis('off')
+uncertainty = (
+    uncertainty
+    /
+    (
+        uncertainty.max()
+        \+ 1e-8
+    )
+)
 
-    plt.tight_layout()
-    plt.show()
+uncertainty = (
+    uncertainty * 255
+).astype(np.uint8)
 
+cv2.imwrite(
+    f"{RESULT_DIR}/{idx}_image.png",
+    image
+)
 
-if __name__ == '__main__':
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+cv2.imwrite(
+    f"{RESULT_DIR}/{idx}_gt.png",
+    gt
+)
 
-    # Instantiate the ComplexUNet model
-    model = ComplexUNet(in_channels=3, out_channels=1)
-    model.to(device)
+cv2.imwrite(
+    f"{RESULT_DIR}/{idx}_pred.png",
+    pred
+)
 
-    # Path to load model weights
-    model_weights_path = os.path.join("medical_segmentation_project", "checkpoints", "complex_unet_segmentation_model.pth")
+cv2.imwrite(
+    f"{RESULT_DIR}/{idx}_uncertainty.png",
+    uncertainty
+)
+```
 
-    if os.path.exists(model_weights_path):
-        print(f"Loading model weights from {model_weights_path}")
-        model.load_state_dict(torch.load(model_weights_path, map_location=device), strict=False)
-    else:
-        print(f"Error: Model weights not found at {model_weights_path}. Please train the model first.")
-        exit() # Exit if model weights are not found
+# --------------------------------------------------
 
-  
-    evaluation_metrics = evaluate_model(model, val_loader, device=device)
+# EVALUATION
 
-    visualize_predictions(model, val_loader, device=device, num_samples=10)
+# --------------------------------------------------
 
+def evaluate(
+model,
+test_loader
+):
 
-file_path = "medical_segmentation_project/scripts/evaluate.py"
+```
+model.eval()
 
-os.makedirs(os.path.dirname(file_path), exist_ok=True)
+crisp_model = CRISP(
+    image_channels=3,
+    mask_channels=1
+).to(DEVICE)
 
+consistency_module = (
+    AnatomicalConsistencyMap()
+)
 
-with open(file_path, "w") as f:
-    f.write(evaluate_script_content.strip())
+dice_scores = []
+iou_scores = []
+acc_scores = []
+ap_scores = []
 
-print(f"Generated {file_path} with the evaluation script.")
+ece_scores = []
+ace_scores = []
+brier_scores = []
+
+uncertainty_scores = []
+
+visual_counter = 0
+
+with torch.no_grad():
+
+    for images, masks in tqdm(
+        test_loader,
+        desc="Testing"
+    ):
+
+        images = images.to(
+            DEVICE
+        )
+
+        masks = masks.to(
+            DEVICE
+        )
+
+        outputs = model(
+            images
+        )
+
+        probs = torch.sigmoid(
+            outputs
+        )
+
+        preds = (
+            probs > 0.5
+        ).float()
+
+        dice = calculate_dice(
+            outputs,
+            masks
+        )
+
+        iou = calculate_iou(
+            preds,
+            masks
+        )
+
+        acc = calculate_accuracy(
+            preds,
+            masks
+        )
+
+        ap = calculate_ap(
+            outputs,
+            masks
+        )
+
+        ece = calculate_ece(
+            probs,
+            masks
+        )
+
+        ace = calculate_ace(
+            probs,
+            masks
+        )
+
+        brier = calculate_brier_score(
+            probs,
+            masks
+        )
+
+        crisp_result = crisp_model(
+            images,
+            preds
+        )
+
+        uncertainty = (
+            crisp_result[
+                "uncertainty"
+            ]
+            .mean()
+            .item()
+        )
+
+        dice_scores.append(
+            float(dice)
+        )
+
+        iou_scores.append(
+            float(iou)
+        )
+
+        acc_scores.append(
+            float(acc)
+        )
+
+        ap_scores.append(
+            float(ap)
+        )
+
+        ece_scores.append(
+            float(ece)
+        )
+
+        ace_scores.append(
+            float(ace)
+        )
+
+        brier_scores.append(
+            float(brier)
+        )
+
+        uncertainty_scores.append(
+            uncertainty
+        )
+
+        if SAVE_VISUALS:
+
+            for b in range(
+                images.size(0)
+            ):
+
+                consistency_map = (
+                    consistency_module(
+                        images[b:b+1],
+                        preds[b:b+1]
+                    )
+                )
+
+                save_visualization(
+                    images[b],
+                    masks[b],
+                    preds[b],
+                    consistency_map[0],
+                    visual_counter
+                )
+
+                visual_counter += 1
+
+results = {
+
+    "Dice":
+        np.mean(dice_scores),
+
+    "Dice_std":
+        np.std(dice_scores),
+
+    "IoU":
+        np.mean(iou_scores),
+
+    "IoU_std":
+        np.std(iou_scores),
+
+    "Accuracy":
+        np.mean(acc_scores),
+
+    "Accuracy_std":
+        np.std(acc_scores),
+
+    "AP":
+        np.mean(ap_scores),
+
+    "AP_std":
+        np.std(ap_scores),
+
+    "ECE":
+        np.mean(ece_scores),
+
+    "ECE_std":
+        np.std(ece_scores),
+
+    "ACE":
+        np.mean(ace_scores),
+
+    "ACE_std":
+        np.std(ace_scores),
+
+    "Brier":
+        np.mean(brier_scores),
+
+    "Brier_std":
+        np.std(brier_scores),
+
+    "CRISP":
+        np.mean(
+            uncertainty_scores
+        ),
+
+    "CRISP_std":
+        np.std(
+            uncertainty_scores
+        )
+}
+
+return results
+```
+
+# --------------------------------------------------
+
+# MAIN
+
+# --------------------------------------------------
+
+def main():
+
+```
+train_loader, val_loader, test_loader = (
+    prepare_busi_dataset()
+)
+
+model = get_model(
+    MODEL_NAME
+)
+
+model.load_state_dict(
+    torch.load(
+        CHECKPOINT_PATH,
+        map_location=DEVICE
+    )
+)
+
+model.to(
+    DEVICE
+)
+
+results = evaluate(
+    model,
+    test_loader
+)
+
+print()
+
+print("======== RESULTS ========")
+
+for k, v in results.items():
+
+    print(
+        f"{k}: {v:.4f}"
+    )
+
+pd.DataFrame(
+    [results]
+).to_csv(
+
+    f"{RESULT_DIR}/{MODEL_NAME}_results.csv",
+
+    index=False
+)
+```
+
+if **name** == "**main**":
+
+```
+main()
+```
