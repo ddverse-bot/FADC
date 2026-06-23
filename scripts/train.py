@@ -11,8 +11,19 @@ import os
 from medical_segmentation_project.models.unet_architectures import ComplexUNet
 from medical_segmentation_project.utils.data_preprocessing import prepare_busi_dataset
 from medical_segmentation_project.utils.losses import DiceLoss, CombinedLoss
+from models import UNet
+from models import UNetFADC
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=20, device='cuda'):
+from models import UNetPlusPlus
+from models import UNetPlusPlusFADC
+
+from models import AttentionUNet
+from models import AttentionUNetFADC
+
+from models import TransUNet
+from models import TransUNetFADC
+
+def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=50, device='cuda'):
     model.to(device)
 
     history = {'train_loss': [], 'val_loss': [], 'val_dice': []}
