@@ -5,7 +5,18 @@ import numpy as np
 
 import torch
 from tqdm import tqdm
+from utils.visualization import Visualizer
 
+viz = Visualizer()
+
+viz.save_complete_visualization(
+    image=image,
+    gt=mask,
+    pred=prediction,
+    uncertainty=unc_map,
+    dice=dice.item(),
+    idx=i
+)
 from utils.data_preprocessing import prepare_busi_dataset
 
 from utils.metrics import (
