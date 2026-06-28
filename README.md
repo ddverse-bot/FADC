@@ -11,12 +11,6 @@ This repository proposes a unified framework that combines:
 The framework is evaluated on **BUSI, BUS-UC, and TN3K** datasets using multiple segmentation architectures: U-Net, U-Net++, Attention U-Net, and TransUNet.
 
 ##  Architecture
-### Pipeline Overview
-1. Input ultrasound image is passed through the segmentation network.
-2. Predicted segmentation mask is generated.
-3. Image and mask are encoded into a joint latent space.
-4. Anatomical consistency is estimated using contrastive similarity.
-5. Calibration and uncertainty estimation are performed.
-6. Anatomically consistent uncertainty maps are generated.
+
 
 
