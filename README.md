@@ -2,9 +2,7 @@
 
 Official PyTorch implementation of Frequency-Adaptive Dilated Convolution (FADC) and Contrastive Representation-based Anatomical Consistency (CRISP) for reliable medical image segmentation and uncertainty estimation.
 
-## 📌 Overview
-Deep neural networks often produce highly confident yet inaccurate predictions in challenging medical images. Reliable uncertainty estimation and confidence calibration are therefore essential for clinical deployment.
-
+##  Overview
 This repository proposes a unified framework that combines:
 * **Frequency-Adaptive Dilated Convolution (FADC)** for frequency-aware multi-scale feature extraction.
 * **CRISP (Contrastive Representation-based Anatomical Consistency Estimation)** for anatomy-aware uncertainty estimation.
@@ -12,7 +10,7 @@ This repository proposes a unified framework that combines:
 
 The framework is evaluated on **BUSI, BUS-UC, and TN3K** datasets using multiple segmentation architectures: U-Net, U-Net++, Attention U-Net, and TransUNet.
 
-## 🏗️ Architecture
+##  Architecture
 ### Pipeline Overview
 1. Input ultrasound image is passed through the segmentation network.
 2. Predicted segmentation mask is generated.
