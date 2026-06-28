@@ -4,7 +4,7 @@ Official PyTorch implementation of **Frequency-Adaptive Dilated Convolution (FAD
 
 ---
 
-# Abstract
+# Overview
 
 Deep learning-based medical image segmentation methods have demonstrated remarkable performance across various medical imaging tasks. However, these models often suffer from two major limitations:
 
@@ -192,7 +192,7 @@ which encourages confidence estimates to align with prediction accuracy.
 # Overall Framework
 
 <p align="center">
-<img src="figures/architecture.png" width="950">
+<img width="1458" height="720" alt="abstractdiaa" src="https://github.com/user-attachments/assets/d6eb68f2-3863-4a9c-9fcf-03d5508c903d" />
 </p>
 
 The proposed framework combines:
@@ -204,12 +204,6 @@ The proposed framework combines:
 to produce accurate and reliable medical image segmentation and uncertainty estimates.
 
 ---
-
-# Qualitative Results
-
-<p align="center">
-<img src="figures/qualitative_results.png" width="1100">
-</p>
 
 The proposed framework progressively improves:
 
