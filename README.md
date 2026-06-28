@@ -12,5 +12,16 @@ The framework is evaluated on **BUSI, BUS-UC, and TN3K** datasets using multiple
 
 ##  Architecture
 
+git clone [https://github.com/ddverse-bot/FADC.git](https://github.com/ddverse-bot/FADC.git)
+cd FADC
+pip install -r requirements.txt
+# Train with FADC and Calibration
+python scripts/train.py --model unetpp --fadc --calibration
 
+# Train individual architectures
+python scripts/train.py --model unet
+python scripts/train.py --model unetpp
+python scripts/train.py --model attunet
+python scripts/train.py --model transunet
+python scripts/evaluate.py --model unetpp --checkpoint checkpoints/unetpp_fadc_calibration.pth
 
